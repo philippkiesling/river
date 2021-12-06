@@ -20,6 +20,7 @@ class PyTorch2RiverBase(base.Estimator):
         loss_fn: typing.Type[torch.nn.modules.loss._Loss],
         optimizer_fn: typing.Type[torch.optim.Optimizer] = torch.optim.Adam,
         learning_rate=1e-3,
+        reuse_prediction = False,
         seed=42,
         **net_params,
     ):
@@ -32,8 +33,9 @@ class PyTorch2RiverBase(base.Estimator):
         self.seed = seed
         torch.manual_seed(seed)
         np.random.seed(seed)
-
+        self.reuse_prediction = reuse_prediction
         self.net = None
+        self.last_prediction = None
 
     @classmethod
     def _unit_test_params(cls):
@@ -72,6 +74,9 @@ class PyTorch2RiverBase(base.Estimator):
         loss = self.loss(y_pred, y)
         loss.backward()
         self.optimizer.step()
+        #Save prediction
+        self.last_prediction = y_pred
+        self.last_loss = loss
 
     def learn_one(self, x: dict, y: base.typing.ClfTarget):
         """Update the model with a set of features `x` and a label `y`.
@@ -185,6 +190,7 @@ class PyTorch2RiverClassifier(PyTorch2RiverBase, base.Classifier):
         loss_fn: typing.Type[torch.nn.modules.loss._Loss],
         optimizer_fn: typing.Type[torch.optim.Optimizer] = torch.optim.Adam,
         learning_rate=1e-3,
+        reuse_prediction=False,
         **net_params,
     ):
         self.classes = collections.Counter()
@@ -194,6 +200,7 @@ class PyTorch2RiverClassifier(PyTorch2RiverBase, base.Classifier):
             loss_fn=loss_fn,
             optimizer_fn=optimizer_fn,
             learning_rate=learning_rate,
+            reuse_prediction = reuse_prediction,
             **net_params,
         )
 
@@ -249,10 +256,14 @@ class PyTorch2RiverClassifier(PyTorch2RiverBase, base.Classifier):
         return self
 
     def predict_proba_one(self, x: dict) -> typing.Dict[base.typing.ClfTarget, float]:
-        if self.net is None:
-            self._init_net(len(list(x.values())))
-        x = torch.Tensor(list(x.values()))
-        yp = self.net(x).detach().numpy()
+        if self.reuse_prediction:
+            yp = self.last_prediction.detach().numpy().ravel()
+        else:
+            if self.net is None:
+                self._init_net(len(list(x.values())))
+            x = torch.Tensor(list(x.values()))
+            yp = self.net(x).detach().numpy()
+
         proba = {c: 0.0 for c in self.classes}
         for idx, val in enumerate(self.classes):
             proba[val] = yp[idx]
@@ -325,6 +336,7 @@ class PyTorch2RiverRegressor(PyTorch2RiverBase, base.MiniBatchRegressor):
         loss_fn: typing.Type[torch.nn.modules.loss._Loss],
         optimizer_fn: typing.Type[torch.optim.Optimizer],
         learning_rate=1e-3,
+        reuse_prediction = False,
         **net_params,
     ):
         super().__init__(
@@ -332,6 +344,7 @@ class PyTorch2RiverRegressor(PyTorch2RiverBase, base.MiniBatchRegressor):
             loss_fn=loss_fn,
             optimizer_fn=optimizer_fn,
             learning_rate=learning_rate,
+            reuse_prediction=reuse_prediction,
             **net_params,
         )
 
@@ -345,10 +358,16 @@ class PyTorch2RiverRegressor(PyTorch2RiverBase, base.MiniBatchRegressor):
         return self
 
     def predict_one(self, x):
-        if self.net is None:
-            self._init_net(len(x))
-        x = torch.Tensor(list(x.values()))
-        return self.net(x).item()
+
+        if self.reuse_prediction:
+            prediction = self.last_prediction.item()
+        else:
+            if self.net is None:
+                self._init_net(len(x))
+            x = torch.Tensor(list(x.values()))
+            prediction = self.net(x).item()
+
+        return prediction
 
     def predict_many(self, X: pd.DataFrame) -> pd.Series:
         if self.net is None:
