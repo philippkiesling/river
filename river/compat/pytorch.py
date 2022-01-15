@@ -70,12 +70,14 @@ class PyTorch2RiverBase(base.Estimator):
 
     def _learn_one(self, x: torch.Tensor, y: torch.Tensor):
         self.net.zero_grad()
+
+        y_pred2 = self.last_prediction
         y_pred = self.net(x)
+        print(f"lp {y_pred2}, y_pred {y_pred}, y {y}")
         loss = self.loss(y_pred, y)
         loss.backward()
         self.optimizer.step()
         #Save prediction
-        self.last_prediction = y_pred
         self.last_loss = loss
 
     def learn_one(self, x: dict, y: base.typing.ClfTarget):
@@ -256,14 +258,13 @@ class PyTorch2RiverClassifier(PyTorch2RiverBase, base.Classifier):
         return self
 
     def predict_proba_one(self, x: dict) -> typing.Dict[base.typing.ClfTarget, float]:
-        if self.reuse_prediction:
-            yp = self.last_prediction.detach().numpy().ravel()
-        else:
-            if self.net is None:
-                self._init_net(len(list(x.values())))
-            x = torch.Tensor(list(x.values()))
-            yp = self.net(x).detach().numpy()
 
+        if self.net is None:
+            self._init_net(len(list(x.values())))
+        x = torch.Tensor(list(x.values()))
+
+        self.last_prediction = self.net(x)
+        yp = self.last_prediction.detach().numpy().ravel()
         proba = {c: 0.0 for c in self.classes}
         for idx, val in enumerate(self.classes):
             proba[val] = yp[idx]
@@ -359,15 +360,14 @@ class PyTorch2RiverRegressor(PyTorch2RiverBase, base.MiniBatchRegressor):
 
     def predict_one(self, x):
 
-        if self.reuse_prediction:
-            prediction = self.last_prediction.item()
-        else:
-            if self.net is None:
-                self._init_net(len(x))
-            x = torch.Tensor(list(x.values()))
-            prediction = self.net(x).item()
 
-        return prediction
+        if self.net is None:
+            self._init_net(len(x))
+        x = torch.Tensor(list(x.values()))
+        prediction = self.net(x)
+
+        self.last_prediction = prediction.copy()
+        return prediction.item()
 
     def predict_many(self, X: pd.DataFrame) -> pd.Series:
         if self.net is None:
